@@ -69,5 +69,6 @@ with open(output_file, 'w', encoding='utf-8') as f_out:
                 f_out.write(json.dumps(training_example) + "\n")
         else:
             print(f"  - Warning: No details found for '{movie_title}' in the CSV. Skipping.")
+        break
 
 print(f"\n✅ Generation dataset creation complete! Saved to {output_file}")

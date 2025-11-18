@@ -2,4 +2,4 @@ pandas
 google
 google-generativeai 
 python-dotenv
-time
+packaging

@@ -2,3 +2,4 @@ dataset.csv
 venv
 .env
 raw_texts
+test.py
