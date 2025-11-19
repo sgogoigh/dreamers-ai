@@ -1,34 +1,43 @@
 import time
-
-# from google import genai
-# from google.genai import types
-
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 import os
 from dotenv import load_dotenv
 load_dotenv()
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+print("Beginning the script ...")
 
-# client = genai.Client()
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-prompt = """Drone shot following a classic red convertible driven by a man along a winding coastal road at sunset, waves crashing against the rocks below.
-The convertible accelerates fast and the engine roars loudly."""
+prompt = """
+A close up of two people staring at a cryptic drawing on a wall, torchlight flickering.
+A man murmurs, 'This must be it. That's the secret code.'
+The woman leans in and whispers excitedly, 'What did you find?'
+"""
 
-operation = genai.models.generate_videos(
-    model="veo-3.1-generate-preview",
+print("Loading model ...")
+operation = client.models.generate_videos(
+    model="veo-3.1-generate-preview",  # MAIN MODEL
     prompt=prompt,
+    # config=types.GenerateVideosConfig(
+    #     resolution="720p",
+    #     aspectRatio="16:9"
+    # )
 )
 
-# Poll the operation status until the video is ready.
+# Poll until finished
 while not operation.done:
     print("Waiting for video generation to complete...")
     time.sleep(10)
-    operation = genai.operations.get(operation)
+    operation = client.operations.get(operation)
 
-# Download the generated video.
+# Get the generated video file reference
 generated_video = operation.response.generated_videos[0]
-genai.files.download(file=generated_video.video)
-generated_video.video.save("realism_example.mp4")
-print("Generated video saved to realism_example.mp4")
+
+# Download to local file
+client.files.download(
+    file=generated_video.video
+)
+generated_video.video.save("dialogue_example.mp4")
+print("Generated video saved to dialogue_example.mp4")

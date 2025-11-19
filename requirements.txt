@@ -3,3 +3,7 @@ google
 google-generativeai 
 python-dotenv
 packaging
+google-genai
+statistics
+transformers
+huggingface

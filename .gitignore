@@ -1,5 +1,7 @@
-dataset.csv
 venv
 .env
 raw_texts
 test.py
+dataset
+jsonl
+generation_chunked.jsonl.bak
