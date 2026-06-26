@@ -27,7 +27,7 @@ from .config import (VEO_MODEL, RESOLUTION, ASPECT_RATIO, SEG_SECONDS,
 # --- low-level helpers -----------------------------------------------------
 def _poll(client, operation, label: str, every: int = 10):
     while not operation.done:
-        print(f"  [{label}] generating…")
+        print(f"  [{label}] generating...")
         time.sleep(every)
         operation = client.operations.get(operation)
     return operation
@@ -73,7 +73,11 @@ def generate_segment(
         number_of_videos=1,
         duration_seconds=str(seg_seconds),
     )
-    if negative_prompt:
+    # Veo 3.1 rejects negative_prompt when the request is image/video/reference
+    # conditioned ("Negative prompt is not supported in your use case"), so only
+    # send it for pure text-to-video.
+    conditioned = (image is not None) or (video is not None) or bool(reference_images)
+    if negative_prompt and not conditioned:
         cfg["negative_prompt"] = negative_prompt
     if reference_images:
         cfg["reference_images"] = [
@@ -134,6 +138,18 @@ def generate_trailer(
 
     for seg in prompts.segments:
         label = f"beat {seg.beat_no}"
+        path = out / f"segment_{seg.beat_no:02d}.mp4"
+
+        # Resume: reuse an already-generated clip instead of paying to regenerate it.
+        if path.exists() and path.stat().st_size > 0:
+            print(f"{label}: reusing existing {path.name}")
+            segment_paths.append(path)
+            prev_video = None  # video object not recoverable from disk
+            prev_last_frame = extract_last_frame(path, out / f"_lastframe_{seg.beat_no:02d}.png")
+            if anchor_img is None and use_anchor:
+                anchor_img = _to_genai_image(prev_last_frame)
+            continue
+
         image = video = None
         if seg.continues_previous:
             if native_extend and prev_video is not None:
@@ -162,7 +178,7 @@ def generate_trailer(
             anchor_img = _to_genai_image(prev_last_frame)  # first clip's end = look anchor
 
     final = stitch(segment_paths, out / "trailer.mp4")
-    print(f"\n✅ Trailer assembled: {final}  ({len(segment_paths)} x {seg_seconds}s)")
+    print(f"\n[OK] Trailer assembled: {final}  ({len(segment_paths)} x {seg_seconds}s)")
     return final
 
 

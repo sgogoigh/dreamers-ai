@@ -2,8 +2,17 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import List, Optional, Literal
+
+# Windows consoles default to cp1252 and crash on emoji / em-dashes / model-generated
+# Unicode. Force UTF-8 on stdout/stderr for every entry point that imports config.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field

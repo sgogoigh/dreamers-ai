@@ -90,3 +90,31 @@ pipeline).
   calls and run anywhere.
 - **E2 — Base model is gated.** `meta-llama/Llama-3.2-3B-Instruct` requires an
   accepted license on the HF account whose token is used.
+
+---
+
+## 5. Trailer pipeline — validated end-to-end (2026-06-27)
+
+Ran the full pipeline live (`THE SHROUD`, a 3-segment test): concept ->
+gemini-3.5-flash trailer script -> gemini-3.5-flash Veo prompts -> 3× Veo 3.1
+8s clips -> ffmpeg stitch. **Result: `trailer_out/trailer.mp4`, 24.0s, 1280×720,
+24fps, h264 + aac audio.** Steps confirmed working: structured Gemini output,
+cross-cut character consistency (same "Thomas" description in every prompt),
+last-frame extraction, anchor reference image on cut beats, and audio-preserving
+concat.
+
+Two real constraints found and fixed along the way:
+- **T1 — Veo rejects `negative_prompt` when the request is image/video/reference
+  conditioned** (`400: Negative prompt is not supported in your use case`). Fix:
+  only send `negative_prompt` for pure text-to-video; drop it whenever an
+  `image`, `video`, or `reference_images` is attached. (step4)
+- **T2 — Windows cp1252 console crashes on emoji / em-dash / model-generated
+  Unicode** in `print()`. Fix: force UTF-8 on stdout/stderr in `config.py`.
+- **T3 — Cost/resume:** step4 now skips any `segment_NN.mp4` that already exists,
+  so a failed run resumes without re-paying for completed clips.
+
+Still untested: the **continuation** path (`continues_previous=true`) — the test
+beats were all hard cuts, so last-frame *seeding into the next clip* and
+`--native-extend` haven't been exercised on a live continuation yet. The
+last-frame *extraction* runs every beat and works; only the seed-forward branch
+is unverified.
