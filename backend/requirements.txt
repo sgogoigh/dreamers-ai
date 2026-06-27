@@ -1,0 +1,25 @@
+# Dreamers-AI trailer backend — fully standalone dependency set.
+# This backend vendors the whole pipeline (app/pipeline/), so it depends only on
+# the packages below — nothing from the surrounding dreamers-ai project.
+
+# --- web ---
+fastapi>=0.110
+uvicorn[standard]>=0.27
+
+# --- pipeline (Gemini 3.5 Flash + Veo 3.1 + stitching) ---
+google-genai>=1.0.0
+pydantic>=2.0
+python-dotenv
+imageio>=2.34
+imageio-ffmpeg            # bundles an ffmpeg binary for stitching + mock clips
+av                        # pyav backend for last-frame extraction
+pillow
+
+# --- tests ---
+pytest>=8.0
+httpx>=0.27
+
+# --- step 1 adapter (GPU only; install in a GPU env to enable the LoRA draft) ---
+# transformers>=4.45
+# huggingface_hub
+# torch, peft, accelerate, bitsandbytes

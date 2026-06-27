@@ -16,3 +16,9 @@ pillow
 transformers>=4.45
 huggingface_hub
 # torch, peft, accelerate, bitsandbytes  -> install in the GPU env (see scripts/evaluate_adapter.ipynb)
+
+# backend production & testing
+fastapi
+uvicorn
+httpx
+pytest

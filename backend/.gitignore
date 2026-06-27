@@ -1,0 +1,10 @@
+# runtime artifacts
+data/
+*.mp4
+*.png
+
+# local env / caches
+.env
+__pycache__/
+*.pyc
+.pytest_cache/

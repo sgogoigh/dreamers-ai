@@ -12,3 +12,14 @@ trailer_out/
 *.pyc
 raw_scene.txt
 *.mp4
+
+# ENV Files
+.env.local.example
+.env.example
+
+# runs 
+run.ps1
+data/
+
+# logs
+logs/
