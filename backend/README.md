@@ -8,11 +8,33 @@ and can be lifted out and deployed on its own.
 
 ```
 concept
+  │  (blueprint)         8-shot structural graph  → fixes role/pace/duration/fade per shot  ← editable
   │  (step 1, optional)  fine-tuned LoRA adapter  → rough draft scene   [GPU only]
-  │  (step 2)            gemini-3.5-flash         → structured trailer script  ← editable / AI-revisable
-  │  (step 3)            gemini-3.5-flash         → chained Veo 3.1 prompts     ← editable
-  └  (step 4)            veo-3.1                  → 8×8s clips, chained + stitched → trailer.mp4
+  │  (step 2)            gemini-3.5-flash         → structured trailer script (fills the blueprint) ← editable / AI-revisable
+  │  (step 3)            gemini-3.5-flash         → chained Veo 3.1 prompts (per-shot duration/pace) ← editable
+  └  (step 4)            veo-3.1 + ffmpeg         → chained clips + fades + composed title card → trailer.mp4
 ```
+
+### The trailer blueprint
+
+Every project carries a **blueprint** — a small typed graph of *slots* that fixes
+the trailer's structure up front so the creative model only fills content, never
+the shape. The default 8-shot structure:
+
+| Slot | role | edge | pace | dur | transition |
+|---|---|---|---|---|---|
+| 1 | hook — cinematic setting, character in shadow | — | slow | 8s | **fade-in** |
+| 2 | setup — introduce cast + first line | **continues 1** | medium | 8s | — |
+| 3–6 | fast escalation cuts (slot 4 is a 6s slow-down) | cut | fast/slow | 8/6s | — |
+| 7 | fast climax tease | cut | fast | 8s | — |
+| 8 | movie-title card | cut | slow | 4s | **fade-out** |
+
+Structural fields (duration, continuation, fades, title-card) are **stamped
+deterministically** onto the beats/segments from the blueprint — the LLM cannot
+drift them. Veo accepts only **4/6/8s** clips, so any target length is snapped
+(a "5s" beat → 6s). Fades and the title text are rendered by **ffmpeg/PIL** in
+post (Veo can't draw legible text); the title card is composed over slot 7's
+freeze frame, so it costs no extra Veo generation.
 
 Why step-by-step: each stage is a separate endpoint so a frontend can show the
 user the script, let them edit it or ask the AI to revise it, *then* build
@@ -54,6 +76,8 @@ Then open **http://localhost:8000/docs** for interactive OpenAPI docs.
 | — | `POST /api/projects` | create a project from a concept |
 | — | `GET /api/projects` / `GET /api/projects/{id}` | list / fetch |
 | — | `DELETE /api/projects/{id}` | delete project + artifacts |
+| ⋆ | `GET /api/projects/{id}/blueprint` | view the shot blueprint (structural contract) |
+| ⋆ | `PUT /api/projects/{id}/blueprint` | edit the blueprint (renumbers slots, invalidates script + prompts) |
 | 1 | `POST /api/projects/{id}/draft` | optional draft — `{"mode":"manual","text":...}` or `{"mode":"adapter"}` (GPU) |
 | 2 | `POST /api/projects/{id}/script` | generate the structured trailer script |
 | 2 | `PUT /api/projects/{id}/script` | replace with a user-edited script (validated) |
@@ -125,8 +149,8 @@ backend/
     jobs.py            # async video job runner + SSE fan-out
     deps.py            # get_project dependency
     pipeline/          # VENDORED pipeline — no deps outside this folder
-      constants.py     #   model ids + trailer defaults
-      schema.py        #   TrailerScript / TrailerPrompts / beats
+      constants.py     #   model ids + trailer defaults + duration snapping (4/6/8)
+      schema.py        #   TrailerBlueprint / TrailerScript / TrailerPrompts / beats
       adapter.py       #   step 1 (LoRA draft, GPU)
       script_writer.py #   step 2 (Gemini trailer script)
       prompt_builder.py#   step 3 (Gemini Veo prompts)

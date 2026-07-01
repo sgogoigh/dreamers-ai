@@ -33,6 +33,7 @@ from ..models import (
     ProjectStatus,
     ReviseScriptRequest,
     ScriptRevision,
+    TrailerBlueprint,
     TrailerJob,
     TrailerPrompts,
     TrailerScript,
@@ -66,6 +67,30 @@ def make_draft(body: DraftRequest, project: Project = Depends(get_project)) -> P
     return storage.save(project)
 
 
+# --- step 1.5: blueprint (structural contract) -----------------------------
+@router.get("/{project_id}/blueprint", response_model=TrailerBlueprint)
+def get_blueprint(project: Project = Depends(get_project)) -> TrailerBlueprint:
+    return project.blueprint
+
+
+@router.put("/{project_id}/blueprint", response_model=TrailerBlueprint)
+def replace_blueprint(
+    body: TrailerBlueprint, project: Project = Depends(get_project)
+) -> TrailerBlueprint:
+    """Accept an edited blueprint. Renumbers slots and invalidates the script and
+    prompts downstream (they were shaped by the old structure)."""
+    for i, slot in enumerate(body.slots, start=1):
+        slot.beat_no = i
+    if body.slots:
+        body.slots[0].continues_previous = False  # first slot can't continue anything
+    project.blueprint = body
+    project.n_segments = len(body.slots)
+    project.script = None
+    project.prompts = None
+    storage.save(project)
+    return body
+
+
 # --- step 2: script --------------------------------------------------------
 @router.post("/{project_id}/script", response_model=TrailerScript)
 def generate_script(project: Project = Depends(get_project)) -> TrailerScript:
@@ -74,7 +99,7 @@ def generate_script(project: Project = Depends(get_project)) -> TrailerScript:
         draft=project.draft or "",
         genre=project.genre,
         tone=project.tone,
-        n_segments=project.n_segments,
+        blueprint=project.blueprint,
     )
     project.script = script
     project.prompts = None  # invalidate downstream artifacts

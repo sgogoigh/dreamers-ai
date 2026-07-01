@@ -1,15 +1,20 @@
 """Step 4 — generate the trailer video, segment by segment, with progress hooks.
 
 The real path reuses the existing low-level Veo helpers (`generate_segment`,
-`extract_last_frame`, `stitch`, ...) from scripts/trailer/step4_generate_video,
-re-implementing only the orchestration loop so we can emit a `progress_cb` after
-every beat (the CLI version just prints). The chaining logic — last-frame
-seeding, native extension, and the cross-cut anchor reference image — mirrors
-the CLI exactly.
+`extract_last_frame`, `stitch`, ...) from app/pipeline/video.py, re-implementing
+only the orchestration loop so we can emit a `progress_cb` after every beat. The
+chaining logic — last-frame seeding, native extension, and the cross-cut anchor
+reference image — is unchanged.
 
-The MOCK path produces a real, playable placeholder clip per beat with the
-bundled ffmpeg (solid color + silent audio, same codec/size/fps), then runs the
-*real* `stitch()`. So the whole assemble-and-serve path is exercised for free.
+Blueprint-driven structure adds three things on top of chaining:
+  * per-segment DURATION (each SegmentPrompt carries its own `duration_seconds`,
+    snapped to Veo's 4/6/8) rather than one uniform length;
+  * FADE transitions applied in post (ffmpeg) — e.g. fade-in on the opening shot;
+  * a composed TITLE CARD: the `is_title_card` segment is NOT sent to Veo. It is
+    built deterministically from the previous clip's freeze frame + the movie
+    title (legible text, guaranteed) with an aesthetic fade-out.
+
+The MOCK path mirrors all of the above with ffmpeg-generated placeholder clips.
 """
 from __future__ import annotations
 
@@ -24,6 +29,8 @@ from ..models import TrailerPrompts
 from ..pipeline.video import (
     generate_segment,
     extract_last_frame,
+    apply_fades,
+    make_title_card,
     _to_genai_image,
     _save,
     stitch,
@@ -40,6 +47,19 @@ _MOCK_COLORS = [
 
 def _noop(_: dict) -> None:
     pass
+
+
+def _seg_seconds(seg, fallback: int) -> int:
+    """Per-segment clip length (blueprint), falling back to the project default."""
+    return getattr(seg, "duration_seconds", None) or fallback
+
+
+def _needs_reencode(prompts: TrailerPrompts) -> bool:
+    """Any fade or title card means heterogeneous clips → force a re-encode concat."""
+    return any(
+        s.is_title_card or s.transition_in != "none" or s.transition_out != "none"
+        for s in prompts.segments
+    )
 
 
 def _make_mock_clip(path: Path, color: str, seconds: int) -> None:
@@ -75,6 +95,9 @@ def run_generation(
 ) -> Path:
     """Generate + chain + stitch the trailer. Returns the final mp4 path.
 
+    `seg_seconds` is now only a FALLBACK; each segment's own `duration_seconds`
+    (from the blueprint) takes precedence.
+
     Emits, via progress_cb:
       {"type":"segment","beat_no":n,"status":"running"|"completed","detail":...,
        "video_filename":"segment_0N.mp4"}
@@ -92,19 +115,34 @@ def run_generation(
 # ---------------------------------------------------------------------------
 def _run_mock(prompts: TrailerPrompts, out_dir: Path, seg_seconds: int, cb: ProgressCb) -> Path:
     segment_paths: List[Path] = []
+    prev_last_frame: Optional[Path] = None
     for i, seg in enumerate(prompts.segments):
         fname = f"segment_{seg.beat_no:02d}.mp4"
         path = out_dir / fname
+        dur = _seg_seconds(seg, seg_seconds)
         cb({"type": "segment", "beat_no": seg.beat_no, "status": "running",
             "detail": "mock render", "video_filename": fname})
         if not (path.exists() and path.stat().st_size > 0):
-            _make_mock_clip(path, _MOCK_COLORS[i % len(_MOCK_COLORS)], seg_seconds)
+            if seg.is_title_card:
+                make_title_card(prev_last_frame, seg.title_text, path, seconds=dur,
+                                fade_out=(seg.transition_out == "fade_out"))
+            else:
+                _make_mock_clip(path, _MOCK_COLORS[i % len(_MOCK_COLORS)], dur)
+                if seg.transition_in == "fade_in" or seg.transition_out == "fade_out":
+                    tmp = path.with_suffix(".fade.mp4")
+                    apply_fades(path, tmp, dur,
+                                fade_in=(seg.transition_in == "fade_in"),
+                                fade_out=(seg.transition_out == "fade_out"))
+                    tmp.replace(path)
         segment_paths.append(path)
+        if not seg.is_title_card:
+            prev_last_frame = extract_last_frame(
+                path, out_dir / f"_lastframe_{seg.beat_no:02d}.png")
         cb({"type": "segment", "beat_no": seg.beat_no, "status": "completed",
             "detail": "mock clip ready", "video_filename": fname})
 
     cb({"type": "stitch", "status": "running"})
-    final = stitch(segment_paths, out_dir / "trailer.mp4")
+    final = stitch(segment_paths, out_dir / "trailer.mp4", reencode=_needs_reencode(prompts))
     cb({"type": "final", "video_filename": final.name})
     return final
 
@@ -126,12 +164,13 @@ def _run_real(
 
     segment_paths: List[Path] = []
     prev_video = None
-    prev_last_frame = None
+    prev_last_frame: Optional[Path] = None
     anchor_img = None
 
     for seg in prompts.segments:
         fname = f"segment_{seg.beat_no:02d}.mp4"
         path = out_dir / fname
+        dur = _seg_seconds(seg, seg_seconds)
 
         # Resume: never re-pay for a clip that already exists on disk.
         if path.exists() and path.stat().st_size > 0:
@@ -139,15 +178,27 @@ def _run_real(
                 "detail": "reused existing clip", "video_filename": fname})
             segment_paths.append(path)
             prev_video = None
-            prev_last_frame = extract_last_frame(
-                path, out_dir / f"_lastframe_{seg.beat_no:02d}.png")
-            if anchor_img is None and use_anchor:
-                anchor_img = _to_genai_image(prev_last_frame)
+            if not seg.is_title_card:
+                prev_last_frame = extract_last_frame(
+                    path, out_dir / f"_lastframe_{seg.beat_no:02d}.png")
+                if anchor_img is None and use_anchor:
+                    anchor_img = _to_genai_image(prev_last_frame)
+            continue
+
+        # Title card: composed from the previous freeze frame — no Veo call.
+        if seg.is_title_card:
+            cb({"type": "segment", "beat_no": seg.beat_no, "status": "running",
+                "detail": "composing title card", "video_filename": fname})
+            make_title_card(prev_last_frame, seg.title_text, path, seconds=dur,
+                            fade_out=(seg.transition_out == "fade_out"))
+            segment_paths.append(path)
+            cb({"type": "segment", "beat_no": seg.beat_no, "status": "completed",
+                "detail": "title card ready", "video_filename": fname})
             continue
 
         kind = "continuation" if seg.continues_previous else "fresh cut"
         cb({"type": "segment", "beat_no": seg.beat_no, "status": "running",
-            "detail": f"generating ({kind})", "video_filename": fname})
+            "detail": f"generating ({kind}, {dur}s, {seg.pace})", "video_filename": fname})
 
         image = video = None
         if seg.continues_previous:
@@ -165,9 +216,18 @@ def _run_real(
         gv = generate_segment(
             client, prompt=seg.prompt, negative_prompt=seg.negative_prompt,
             image=image, video=video, reference_images=refs,
-            seg_seconds=seg_seconds, label=f"beat {seg.beat_no}",
+            seg_seconds=dur, label=f"beat {seg.beat_no}",
         )
         _save(client, gv, path)
+
+        # Fade transitions are applied in post (ffmpeg), not by Veo.
+        if seg.transition_in == "fade_in" or seg.transition_out == "fade_out":
+            tmp = path.with_suffix(".fade.mp4")
+            apply_fades(path, tmp, dur,
+                        fade_in=(seg.transition_in == "fade_in"),
+                        fade_out=(seg.transition_out == "fade_out"))
+            tmp.replace(path)
+
         segment_paths.append(path)
 
         prev_video = gv.video
@@ -180,6 +240,6 @@ def _run_real(
             "detail": "clip ready", "video_filename": fname})
 
     cb({"type": "stitch", "status": "running"})
-    final = stitch(segment_paths, out_dir / "trailer.mp4")
+    final = stitch(segment_paths, out_dir / "trailer.mp4", reencode=_needs_reencode(prompts))
     cb({"type": "final", "video_filename": final.name})
     return final

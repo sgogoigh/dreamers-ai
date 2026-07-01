@@ -18,6 +18,10 @@ from .pipeline.schema import (  # noqa: F401
     TrailerScript,
     SegmentPrompt,
     TrailerPrompts,
+    CastMember,
+    Slot,
+    TrailerBlueprint,
+    default_blueprint,
 )
 
 
@@ -49,6 +53,8 @@ class SegmentState(BaseModel):
     beat_no: int
     status: JobStatus = JobStatus.pending
     continues_previous: bool = False
+    duration_seconds: int = 8
+    is_title_card: bool = False
     video_url: Optional[str] = None
     detail: str = ""
 
@@ -86,6 +92,10 @@ class Project(BaseModel):
     tone: str = ""
     n_segments: int
     seg_seconds: int
+
+    # structural contract for the trailer (the shot blueprint / graph). Defaults
+    # to the canonical 8-shot structure; editable via the blueprint endpoints.
+    blueprint: TrailerBlueprint = Field(default_factory=default_blueprint)
 
     # step 1 (optional)
     draft: Optional[str] = None

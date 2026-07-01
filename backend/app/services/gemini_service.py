@@ -11,45 +11,46 @@ network, no key, no cost.
 from __future__ import annotations
 
 from ..config import settings
-from ..models import TrailerScript, TrailerPrompts, TrailerBeat, SegmentPrompt
+from ..models import TrailerScript, TrailerPrompts, TrailerBeat, SegmentPrompt, CastMember
+from ..pipeline.schema import TrailerBlueprint, default_blueprint
 
 # Vendored pipeline functions (steps 2 & 3).
-from ..pipeline.script_writer import refine_to_trailer_script
+from ..pipeline.script_writer import refine_to_trailer_script, _stamp_structure
 from ..pipeline.prompt_builder import build_segment_prompts
+from ..pipeline.constants import snap_duration
 
 
 # ---------------------------------------------------------------------------
 # MOCK fixtures
 # ---------------------------------------------------------------------------
-_SECTIONS = ["hook", "setup", "escalation", "climax", "title_card", "stinger"]
-
-
-def _mock_script(concept: str, genre: str, tone: str, n: int) -> TrailerScript:
+def _mock_script(concept: str, genre: str, tone: str, blueprint: TrailerBlueprint) -> TrailerScript:
+    """A schema-valid script shaped exactly by the blueprint (structure stamped)."""
     beats = []
-    for i in range(1, n + 1):
-        section = _SECTIONS[min(i - 1, len(_SECTIONS) - 1)]
+    for slot in blueprint.slots:
+        i = slot.beat_no
         beats.append(
             TrailerBeat(
                 beat_no=i,
-                section=section,
+                section=slot.section,
                 setting=f"Mock setting {i} for '{concept[:40]}'",
-                visual=f"Mock visual beat {i}: a character reacts as the central "
-                f"conflict of '{concept[:60]}' escalates.",
+                visual=f"Mock visual beat {i} ({slot.pace}): {slot.intent}",
                 voiceover="In a world..." if i == 1 else "",
-                dialogue="We have to move. Now." if section == "escalation" else "",
-                on_screen_text=(concept[:24].upper() if section == "title_card" else ""),
+                dialogue="We have to move. Now." if slot.section == "escalation" else "",
                 mood=tone or "tense",
-                continues_previous=(i > 1 and i % 3 == 0),
             )
         )
-    beats[0].continues_previous = False
-    return TrailerScript(
+    script = TrailerScript(
         title=f"MOCK: {concept[:30].strip().upper() or 'UNTITLED'}",
         logline=f"A mock logline derived from: {concept}",
         genre=genre or "Drama",
         tone=tone or "tense",
+        cast=[
+            CastMember(name="Alex", description="early-30s, lean, dark cropped hair, grey field jacket"),
+            CastMember(name="Mara", description="late-20s, tall, auburn braid, navy overcoat"),
+        ],
         beats=beats,
     )
+    return _stamp_structure(script, blueprint)  # same deterministic stamping as the real path
 
 
 def _mock_prompts(script: TrailerScript) -> TrailerPrompts:
@@ -59,11 +60,17 @@ def _mock_prompts(script: TrailerScript) -> TrailerPrompts:
             SegmentPrompt(
                 beat_no=b.beat_no,
                 prompt=(
-                    f"[MOCK PROMPT beat {b.beat_no}] Cinematic shot. {b.visual} "
+                    f"[MOCK PROMPT beat {b.beat_no}, {b.pace}] Cinematic shot. {b.visual} "
                     f"Setting: {b.setting}. Mood: {b.mood}. Audio: trailer score swell."
                 ),
                 negative_prompt="no watermark, no subtitles, no distorted faces",
                 continues_previous=b.continues_previous,
+                pace=b.pace,
+                duration_seconds=snap_duration(b.target_seconds),
+                transition_in=b.transition_in,
+                transition_out=b.transition_out,
+                is_title_card=b.is_title_card,
+                title_text=(script.title if b.is_title_card else ""),
             )
         )
     if segs:
@@ -75,18 +82,24 @@ def _mock_prompts(script: TrailerScript) -> TrailerPrompts:
 # Public service functions
 # ---------------------------------------------------------------------------
 def generate_script(
-    *, concept: str, draft: str, genre: str, tone: str, n_segments: int
+    *, concept: str, draft: str, genre: str, tone: str,
+    blueprint: TrailerBlueprint | None = None,
 ) -> TrailerScript:
-    """Step 2 — structured trailer script from concept (+ optional draft)."""
+    """Step 2 — structured trailer script from concept (+ optional draft), shaped
+    by the trailer blueprint."""
+    bp = blueprint or default_blueprint()
     if settings.MOCK:
-        return _mock_script(concept, genre, tone, n_segments)
+        return _mock_script(concept, genre, tone, bp)
     return refine_to_trailer_script(
-        concept=concept, draft=draft, genre=genre, tone=tone, n_segments=n_segments
+        concept=concept, draft=draft, genre=genre, tone=tone, blueprint=bp
     )
 
 
-def build_prompts(*, script: TrailerScript, seg_seconds: int) -> TrailerPrompts:
-    """Step 3 — expand the script into chained Veo 3.1 segment prompts."""
+def build_prompts(*, script: TrailerScript, seg_seconds: int | None = None) -> TrailerPrompts:
+    """Step 3 — expand the script into chained Veo 3.1 segment prompts.
+
+    Per-segment duration comes from each beat's blueprint-stamped `target_seconds`;
+    `seg_seconds` is retained only for call-site compatibility."""
     if settings.MOCK:
         return _mock_prompts(script)
     return build_segment_prompts(script, seg_seconds=seg_seconds)

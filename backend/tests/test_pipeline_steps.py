@@ -25,15 +25,51 @@ def test_adapter_draft_in_mock_returns_seed(client, project_id):
     assert r.json()["draft"]
 
 
+# --- step 1.5: blueprint ---------------------------------------------------
+def test_default_blueprint_shape(client, project_id):
+    r = client.get(f"/api/projects/{project_id}/blueprint")
+    assert r.status_code == 200
+    slots = r.json()["slots"]
+    assert len(slots) == 8
+    assert [s["beat_no"] for s in slots] == list(range(1, 9))
+    assert slots[0]["transition_in"] == "fade_in"
+    assert slots[1]["continues_previous"] is True       # slot 2 continues slot 1
+    assert slots[3]["target_seconds"] == 6              # slot 4 slow-down (5s -> 6)
+    assert slots[7]["is_title_card"] is True
+    assert slots[7]["transition_out"] == "fade_out"
+    assert slots[7]["target_seconds"] == 4
+
+
+def test_edit_blueprint_invalidates_downstream_and_renumbers(client, project_id):
+    client.post(f"/api/projects/{project_id}/script")
+    bp = client.get(f"/api/projects/{project_id}/blueprint").json()
+    bp["slots"] = bp["slots"][:4]                       # trim to 4 slots
+    bp["slots"][0]["beat_no"] = 99                      # server must renumber
+    r = client.put(f"/api/projects/{project_id}/blueprint", json=bp)
+    assert r.status_code == 200
+    out = r.json()
+    assert [s["beat_no"] for s in out["slots"]] == [1, 2, 3, 4]
+    proj = client.get(f"/api/projects/{project_id}").json()
+    assert proj["n_segments"] == 4
+    assert proj["script"] is None and proj["prompts"] is None  # invalidated
+
+
 # --- step 2: script --------------------------------------------------------
 def test_generate_script_shape(client, project_id):
     r = client.post(f"/api/projects/{project_id}/script")
     assert r.status_code == 200
     s = r.json()
     assert s["title"] and s["logline"] and s["beats"]
-    assert len(s["beats"]) == 3                       # honored n_segments
+    assert len(s["beats"]) == 8                        # blueprint-driven (8 slots)
+    assert [b["beat_no"] for b in s["beats"]] == list(range(1, 9))  # renumbered
+    assert s["cast"]                                    # a consistent cast is emitted
+    # structural fields stamped from the blueprint
     assert s["beats"][0]["continues_previous"] is False
-    assert [b["beat_no"] for b in s["beats"]] == [1, 2, 3]  # renumbered
+    assert s["beats"][0]["transition_in"] == "fade_in"
+    assert s["beats"][1]["continues_previous"] is True
+    assert s["beats"][3]["target_seconds"] == 6
+    assert s["beats"][7]["is_title_card"] is True
+    assert s["beats"][7]["on_screen_text"] == s["title"]
 
 
 def test_revise_requires_existing_script(client, project_id):
@@ -85,9 +121,16 @@ def test_build_prompts_aligns_with_script(client, project_id):
     r = client.post(f"/api/projects/{project_id}/prompts")
     assert r.status_code == 200
     segs = r.json()["segments"]
-    assert len(segs) == 3
+    assert len(segs) == 8
     assert segs[0]["continues_previous"] is False
     assert all(s["prompt"] for s in segs)
+    # structural fields carried from the beats/blueprint
+    assert segs[0]["transition_in"] == "fade_in"
+    assert segs[3]["duration_seconds"] == 6
+    assert segs[7]["is_title_card"] is True
+    assert segs[7]["duration_seconds"] == 4
+    assert segs[7]["title_text"]                       # title propagated for rendering
+    assert all(s["duration_seconds"] in (4, 6, 8) for s in segs)  # Veo-valid
 
 
 def test_generating_script_invalidates_prompts(client, project_id):

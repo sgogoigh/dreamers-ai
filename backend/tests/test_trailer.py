@@ -63,7 +63,8 @@ def test_full_trailer_flow_and_serving():
             assert r.status_code == 202
             job = r.json()
             assert job["status"] in ("pending", "running")
-            assert len(job["segments"]) == 3
+            assert len(job["segments"]) == 8              # blueprint-driven
+            assert job["segments"][-1]["is_title_card"] is True
 
             final = await _poll_until_done(ac, pid)
             assert final["status"] == "completed", final.get("error")
@@ -71,6 +72,9 @@ def test_full_trailer_flow_and_serving():
             assert final["video_url"]
             assert all(s["status"] == "completed" for s in final["segments"])
             assert all(s["video_url"] for s in final["segments"])
+            # the composed title card is served like any other segment
+            title_seg = await ac.get(f"/api/projects/{pid}/segments/8")
+            assert title_seg.status_code == 200 and len(title_seg.content) > 500
 
             v = await ac.get(f"/api/projects/{pid}/trailer/video")
             assert v.status_code == 200

@@ -75,6 +75,8 @@ class JobManager:
                 SegmentState(
                     beat_no=s.beat_no,
                     continues_previous=s.continues_previous,
+                    duration_seconds=getattr(s, "duration_seconds", project.seg_seconds),
+                    is_title_card=getattr(s, "is_title_card", False),
                     status=JobStatus.pending,
                 )
                 for s in project.prompts.segments

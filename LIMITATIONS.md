@@ -71,6 +71,14 @@ pipeline).
   (≈64s). Mechanisms available: native video extension (`video=prev_clip`),
   first/last-frame interpolation (`image` + `config.last_frame`), and reference
   images (≤3) for cross-cut character consistency.
+- **V5 — Veo accepts ONLY 4, 6, or 8 second clips.** There is no 5s. Any target
+  length is snapped to the nearest valid value (`constants.snap_duration`, ties go
+  up: 5→6). The old `generate_segment` sent the raw duration unchecked — a latent
+  bug for any non-8s value, now fixed.
+- **V6 — Veo cannot render legible on-screen text.** Title cards / fades are done
+  in post (ffmpeg fade filter + PIL-drawn title), NOT by Veo. The title card is
+  composed over the previous clip's freeze frame, so it costs no Veo generation
+  and the text is always readable.
 - **V2 — Extension input must be 720p, 16:9 or 9:16, ≤141s total.** Keep working
   clips at 720p when chaining; upscale only at the end if needed.
 - **V3 — Character/style consistency across hard cuts is not automatic.** A
@@ -118,3 +126,32 @@ beats were all hard cuts, so last-frame *seeding into the next clip* and
 `--native-extend` haven't been exercised on a live continuation yet. The
 last-frame *extraction* runs every beat and works; only the seed-forward branch
 is unverified.
+
+---
+
+## 6. Trailer blueprint — structural contract (2026-07-01)
+
+The trailer's shot structure is now fixed by a typed **blueprint** (a small graph
+of slots) instead of being left to the model. Each slot declares its role, pace,
+target duration, continuity edge (`continues_previous`), and fade transition; the
+creative model (step 2) only fills content, and structural fields are **stamped
+back deterministically** so they cannot drift. The default is an 8-shot structure
+(fade-in hook → continued setup → fast escalation cuts with one 6s slow-down →
+climax tease → 4s title card with fade-out). The blueprint is editable via
+`GET/PUT /projects/{id}/blueprint`; editing it invalidates the script + prompts.
+
+Consequences / notes:
+- **Per-segment duration** now flows end to end (`SegmentPrompt.duration_seconds`),
+  replacing the single uniform `seg_seconds`. Snapped to Veo's 4/6/8 (see V5).
+- **`n_segments` is now derived** from the blueprint (default 8); the create-time
+  value is informational and realigned whenever the blueprint is edited.
+- **Title card is not a Veo clip** — it is composed by ffmpeg/PIL over slot 7's
+  freeze frame (see V6). So a "guaranteed 8 clips" trailer is **7 Veo generations
+  + 1 composed card**. Flip `is_title_card=False` on slot 8 to spend a real Veo
+  generation there instead.
+- **Fades force a re-encode** at stitch time (`stitch(..., reencode=True)` is set
+  automatically whenever any fade/title is present) so the heterogeneous clips
+  concat cleanly.
+- Verified end-to-end in MOCK: 8 beats, durations 8/8/8/6/8/8/8/4, fade-in on 1,
+  composed title card + fade-out on 8, 58s stitched trailer. Full pytest suite
+  (29 tests) green.
