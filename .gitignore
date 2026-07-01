@@ -9,6 +9,7 @@ generation_chunked.jsonl.bak
 # trailer pipeline outputs & python caches
 trailer_out/
 **/__pycache__/
+**/.pytest_cache/
 *.pyc
 raw_scene.txt
 *.mp4
@@ -23,3 +24,6 @@ data/
 
 # logs
 logs/
+
+# outputs
+out/

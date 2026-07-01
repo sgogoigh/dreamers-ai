@@ -1,0 +1,9 @@
+# Graph-native trailer engine — standalone deps.
+google-genai>=1.0.0
+pydantic>=2.0
+python-dotenv
+imageio>=2.34
+imageio-ffmpeg          # bundled ffmpeg for stitching + mock clips + fades
+av                      # pyav backend for last-frame extraction
+pillow                  # title-card text rendering
+pytest>=8.0
